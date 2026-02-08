@@ -14,8 +14,13 @@ services:
     env_file:
       - .env
     restart: unless-stopped
+    volumes:
+      - kan_uploads:/data
     environment:
       - KAN_ADMIN_API_KEY=${KAN_ADMIN_API_KEY}
+      - KAN_STORAGE_DRIVER=${KAN_STORAGE_DRIVER}
+      # Always use a Linux container path here (do not point to a Windows host path).
+      - KAN_STORAGE_DIR=/data
       - NEXT_PUBLIC_KAN_ENV=${NEXT_PUBLIC_KAN_ENV}
       - NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
@@ -53,6 +58,7 @@ services:
       - S3_ENDPOINT=${S3_ENDPOINT}
       - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE}
       - NEXT_PUBLIC_STORAGE_URL=${NEXT_PUBLIC_STORAGE_URL}
+      - NEXT_PUBLIC_UPLOADS_PATH=${NEXT_PUBLIC_UPLOADS_PATH}
       - NEXT_PUBLIC_AVATAR_BUCKET_NAME=${NEXT_PUBLIC_AVATAR_BUCKET_NAME}
       - NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME=${NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME}
       - NEXT_PUBLIC_STORAGE_DOMAIN=${NEXT_PUBLIC_STORAGE_DOMAIN}
@@ -84,3 +90,6 @@ networks:
   dokploy-network:
     external: true
 #bump
+
+volumes:
+  kan_uploads:

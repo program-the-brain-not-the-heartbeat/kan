@@ -14,6 +14,8 @@ export const env = createEnv({
    * This way you can ensure the app isn't built with invalid env vars.
    */
   server: {
+    KAN_STORAGE_DRIVER: z.enum(["s3", "fs"]).optional(),
+    KAN_STORAGE_DIR: z.string().optional(),
     KAN_ADMIN_API_KEY: z.string().optional(),
     BETTER_AUTH_SECRET: z.string(),
     BETTER_AUTH_TRUSTED_ORIGINS: z
@@ -93,6 +95,13 @@ export const env = createEnv({
     NEXT_PUBLIC_USE_STANDALONE_OUTPUT: z.string().optional(),
     NEXT_PUBLIC_BASE_URL: z.string().url().optional(),
     NEXT_PUBLIC_STORAGE_URL: z.string().url().optional(),
+    NEXT_PUBLIC_UPLOADS_PATH: z
+      .string()
+      .transform((s) => (s === "" ? undefined : s))
+      .refine((s) => !s || s.startsWith("/"), {
+        message: "NEXT_PUBLIC_UPLOADS_PATH must start with '/'",
+      })
+      .optional(),
     NEXT_PUBLIC_AVATAR_BUCKET_NAME: z.string().optional(),
     NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME: z.string().optional(),
     NEXT_PUBLIC_STORAGE_DOMAIN: z.string().optional(),
@@ -137,6 +146,7 @@ export const env = createEnv({
     NEXT_PUBLIC_POSTHOG_HOST: process.env.NEXT_PUBLIC_POSTHOG_HOST,
     NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL,
     NEXT_PUBLIC_STORAGE_URL: process.env.NEXT_PUBLIC_STORAGE_URL,
+    NEXT_PUBLIC_UPLOADS_PATH: process.env.NEXT_PUBLIC_UPLOADS_PATH,
     NEXT_PUBLIC_AVATAR_BUCKET_NAME: process.env.NEXT_PUBLIC_AVATAR_BUCKET_NAME,
     NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME:
       process.env.NEXT_PUBLIC_ATTACHMENTS_BUCKET_NAME,

@@ -18,13 +18,13 @@ import * as listRepo from "@kan/db/repository/list.repo";
 import * as memberRepo from "@kan/db/repository/member.repo";
 import * as userRepo from "@kan/db/repository/user.repo";
 import * as workspaceRepo from "@kan/db/repository/workspace.repo";
+import { createS3Client, getStorageDriver } from "@kan/shared/utils";
 
 import {
   adminProtectedProcedure,
   createTRPCRouter,
   publicProcedure,
 } from "../trpc";
-import { createS3Client } from "@kan/shared/utils";
 
 const checkDatabaseConnection = async (db: dbClient) => {
   try {
@@ -35,8 +35,23 @@ const checkDatabaseConnection = async (db: dbClient) => {
   }
 };
 
-const checkS3Connection = async () => {
+const checkStorageConnection = async () => {
   try {
+    if (getStorageDriver() === "fs") {
+      const storageDir = process.env.KAN_STORAGE_DIR;
+      if (!storageDir) {
+        return false;
+      }
+
+      const fs = await import("node:fs/promises");
+      const path = await import("node:path");
+
+      const uploadsRoot = path.resolve(storageDir, "uploads");
+      await fs.mkdir(uploadsRoot, { recursive: true });
+      await fs.access(uploadsRoot);
+      return true;
+    }
+
     // Check if S3 is configured
     if (
       !process.env.S3_ENDPOINT ||
@@ -84,22 +99,27 @@ export const healthRouter = createTRPCRouter({
     )
     .query(async ({ ctx }) => {
       const dbHealthy = await checkDatabaseConnection(ctx.db);
-      const s3Healthy = await checkS3Connection();
-      const s3Configured = !!(
-        process.env.S3_ENDPOINT &&
-        process.env.S3_ACCESS_KEY_ID &&
-        process.env.S3_SECRET_ACCESS_KEY
-      );
+      const storageHealthy = await checkStorageConnection();
+      const driver = getStorageDriver();
+      const storageConfigured =
+        driver === "fs"
+          ? !!process.env.KAN_STORAGE_DIR
+          : !!(
+              process.env.S3_ENDPOINT &&
+              process.env.S3_ACCESS_KEY_ID &&
+              process.env.S3_SECRET_ACCESS_KEY
+            );
 
       const database = dbHealthy ? "ok" : "error";
-      const storage = !s3Configured
+      const storage = !storageConfigured
         ? "not_configured"
-        : s3Healthy
+        : storageHealthy
           ? "ok"
           : "error";
 
       // Overall status is "ok" only if database is healthy and (storage is not configured or storage is healthy)
-      const status = dbHealthy && (!s3Configured || s3Healthy) ? "ok" : "error";
+      const status =
+        dbHealthy && (!storageConfigured || storageHealthy) ? "ok" : "error";
 
       return {
         status,

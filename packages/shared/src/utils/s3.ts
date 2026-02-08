@@ -7,6 +7,67 @@ import {
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { env } from "next-runtime-env";
 
+export type StorageDriver = "s3" | "fs";
+
+function normalizePublicPath(pathname: string | undefined, fallback: string) {
+  const trimmed = (pathname ?? "").trim();
+  const value = trimmed.length > 0 ? trimmed : fallback;
+
+  if (value === "/") {
+    return "";
+  }
+
+  const withLeadingSlash = value.startsWith("/") ? value : `/${value}`;
+  return withLeadingSlash.endsWith("/")
+    ? withLeadingSlash.slice(0, -1)
+    : withLeadingSlash;
+}
+
+function joinUrl(base: string, ...parts: string[]) {
+  const trimmedBase = base.endsWith("/") ? base.slice(0, -1) : base;
+  const cleaned = parts
+    .filter(Boolean)
+    .map((p) => p.replace(/^\/+/, "").replace(/\/+$/, ""))
+    .filter((p) => p.length > 0);
+
+  if (cleaned.length === 0) {
+    return trimmedBase;
+  }
+
+  return `${trimmedBase}/${cleaned.join("/")}`;
+}
+
+export function getStorageDriver(): StorageDriver {
+  const explicit = process.env.KAN_STORAGE_DRIVER?.toLowerCase();
+  if (explicit === "fs" || explicit === "s3") {
+    return explicit;
+  }
+
+  if (process.env.S3_ENDPOINT) {
+    return "s3";
+  }
+
+  if (process.env.KAN_STORAGE_DIR) {
+    return "fs";
+  }
+
+  return "s3";
+}
+
+function getUploadsPublicPath() {
+  return normalizePublicPath(env("NEXT_PUBLIC_UPLOADS_PATH"), "/uploads");
+}
+
+function getPublicObjectUrl(bucket: string, key: string) {
+  const storageUrl = env("NEXT_PUBLIC_STORAGE_URL");
+  if (!storageUrl) {
+    return null;
+  }
+
+  const uploadsPath = getUploadsPublicPath();
+  return joinUrl(storageUrl, uploadsPath, bucket, key);
+}
+
 export function createS3Client() {
   const credentials =
     process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY
@@ -30,6 +91,10 @@ export async function generateUploadUrl(
   contentType: string,
   expiresIn = 3600,
 ) {
+  if (getStorageDriver() === "fs") {
+    throw new Error("generateUploadUrl is not supported for fs storage");
+  }
+
   const client = createS3Client();
   return getSignedUrl(
     client,
@@ -48,6 +113,15 @@ export async function generateDownloadUrl(
   key: string,
   expiresIn = 3600,
 ) {
+  if (getStorageDriver() === "fs") {
+    const url = getPublicObjectUrl(bucket, key);
+    if (!url) {
+      throw new Error("Storage URL not configured");
+    }
+
+    return url;
+  }
+
   const client = createS3Client();
   return getSignedUrl(
     client,
@@ -60,6 +134,43 @@ export async function generateDownloadUrl(
 }
 
 export async function deleteObject(bucket: string, key: string) {
+  if (getStorageDriver() === "fs") {
+    const storageDir = process.env.KAN_STORAGE_DIR;
+    if (!storageDir) {
+      throw new Error("KAN_STORAGE_DIR is required for fs storage");
+    }
+
+    const [{ unlink }] = await Promise.all([import("node:fs/promises")]);
+
+    const path = await import("node:path");
+
+    const uploadsRoot = path.resolve(storageDir, "uploads");
+    const candidate = path.resolve(
+      uploadsRoot,
+      bucket,
+      ...key.split("/").filter(Boolean),
+    );
+
+    if (
+      !candidate.startsWith(`${uploadsRoot}${path.sep}`) &&
+      candidate !== uploadsRoot
+    ) {
+      throw new Error("Invalid storage key");
+    }
+
+    try {
+      await unlink(candidate);
+    } catch (error: unknown) {
+      if ((error as { code?: string }).code === "ENOENT") {
+        return;
+      }
+
+      throw error;
+    }
+
+    return;
+  }
+
   const client = createS3Client();
   await client.send(
     new DeleteObjectCommand({
@@ -92,6 +203,10 @@ export async function generateAvatarUrl(
     return null;
   }
 
+  if (getStorageDriver() === "fs") {
+    return getPublicObjectUrl(bucket, imageKey);
+  }
+
   try {
     return await generateDownloadUrl(bucket, imageKey, expiresIn);
   } catch {
@@ -117,6 +232,10 @@ export async function generateAttachmentUrl(
     return null;
   }
 
+  if (getStorageDriver() === "fs") {
+    return getPublicObjectUrl(bucket, attachmentKey);
+  }
+
   try {
     return await generateDownloadUrl(bucket, attachmentKey, expiresIn);
   } catch {
@@ -124,4 +243,3 @@ export async function generateAttachmentUrl(
     return null;
   }
 }
-

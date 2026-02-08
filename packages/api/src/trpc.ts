@@ -21,6 +21,20 @@ export interface User {
   stripeCustomerId?: string | null | undefined;
 }
 
+function normalizeForwardedHeaders(headers: Headers) {
+  const keys = ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-port"];
+  for (const key of keys) {
+    const raw = headers.get(key);
+    if (!raw) continue;
+
+    // Reverse proxies can append values, resulting in e.g. "http, https".
+    const first = raw.split(",")[0]?.trim();
+    if (first && first !== raw) {
+      headers.set(key, first);
+    }
+  }
+}
+
 const createAuthWithHeaders = (
   auth: ReturnType<typeof initAuth>,
   headers: Headers,
@@ -62,6 +76,7 @@ export const createTRPCContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
   const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
+  normalizeForwardedHeaders(headers);
   const auth = createAuthWithHeaders(baseAuth, headers);
 
   const session = await auth.api.getSession();
@@ -73,6 +88,7 @@ export const createNextApiContext = async (req: NextApiRequest) => {
   const db = createDrizzleClient();
   const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
+  normalizeForwardedHeaders(headers);
   const auth = createAuthWithHeaders(baseAuth, headers);
 
   const session = await auth.api.getSession();
@@ -84,6 +100,7 @@ export const createRESTContext = async ({ req }: CreateNextContextOptions) => {
   const db = createDrizzleClient();
   const baseAuth = initAuth(db);
   const headers = new Headers(req.headers as Record<string, string>);
+  normalizeForwardedHeaders(headers);
   const auth = createAuthWithHeaders(baseAuth, headers);
 
   let session;

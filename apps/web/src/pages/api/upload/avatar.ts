@@ -1,12 +1,16 @@
+import { createWriteStream } from "node:fs";
+import { mkdir } from "node:fs/promises";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import type { NextApiRequest, NextApiResponse } from "next";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 
 import { createNextApiContext } from "@kan/api/trpc";
+import { withRateLimit } from "@kan/api/utils/rateLimit";
 import * as userRepo from "@kan/db/repository/user.repo";
+import { createS3Client } from "@kan/shared/utils";
 
 import { env } from "~/env";
-import { withRateLimit } from "@kan/api/utils/rateLimit";
-import { createS3Client } from "@kan/shared/utils";
 
 const MAX_SIZE_BYTES = 2 * 1024 * 1024; // 2MB
 const allowedContentTypes = ["image/jpeg", "image/png", "image/webp"];
@@ -51,7 +55,9 @@ export default withRateLimit(
       }
 
       if (!Number.isFinite(contentLength) || contentLength <= 0) {
-        return res.status(400).json({ error: "Missing or invalid content length" });
+        return res
+          .status(400)
+          .json({ error: "Missing or invalid content length" });
       }
 
       if (contentLength > MAX_SIZE_BYTES) {
@@ -67,18 +73,48 @@ export default withRateLimit(
 
       const s3Key = `${user.id}/${sanitizedFilename}`;
 
-      const client = createS3Client();
+      const driver =
+        env.KAN_STORAGE_DRIVER ??
+        (env.KAN_STORAGE_DIR ? "fs" : env.S3_ENDPOINT ? "s3" : "s3");
 
-      // Upload the file to S3
-      await client.send(
-        new PutObjectCommand({
-          Bucket: bucket,
-          Key: s3Key,
-          Body: req,
-          ContentType: contentType,
-          ContentLength: contentLength,
-        }),
-      );
+      if (driver === "fs") {
+        const storageDir = env.KAN_STORAGE_DIR;
+        if (!storageDir) {
+          return res
+            .status(500)
+            .json({ error: "KAN_STORAGE_DIR not configured" });
+        }
+
+        const uploadsRoot = path.resolve(storageDir, "uploads");
+        const targetPath = path.resolve(
+          uploadsRoot,
+          bucket,
+          ...s3Key.split("/").filter(Boolean),
+        );
+
+        if (
+          !targetPath.startsWith(`${uploadsRoot}${path.sep}`) &&
+          targetPath !== uploadsRoot
+        ) {
+          return res.status(400).json({ error: "Invalid storage key" });
+        }
+
+        await mkdir(path.dirname(targetPath), { recursive: true });
+        await pipeline(req, createWriteStream(targetPath));
+      } else {
+        const client = createS3Client();
+
+        // Upload the file to S3
+        await client.send(
+          new PutObjectCommand({
+            Bucket: bucket,
+            Key: s3Key,
+            Body: req,
+            ContentType: contentType,
+            ContentLength: contentLength,
+          }),
+        );
+      }
 
       // Update user image in database
       const updatedUser = await userRepo.update(db, user.id, {
@@ -98,4 +134,3 @@ export default withRateLimit(
     }
   },
 );
-

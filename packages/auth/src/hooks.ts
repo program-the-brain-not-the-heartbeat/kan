@@ -7,7 +7,11 @@ import type { dbClient } from "@kan/db/client";
 import * as memberRepo from "@kan/db/repository/member.repo";
 import * as userRepo from "@kan/db/repository/user.repo";
 import { notificationClient } from "@kan/email";
-import { createEmailUnsubscribeLink, createS3Client } from "@kan/shared";
+import {
+  createEmailUnsubscribeLink,
+  createS3Client,
+  getStorageDriver,
+} from "@kan/shared";
 
 import { downloadImage } from "./utils";
 
@@ -61,8 +65,6 @@ export function createDatabaseHooks(db: dbClient) {
             !user.image.includes(storageDomain)
           ) {
             try {
-              const client = createS3Client();
-
               const allowedFileExtensions = ["jpg", "jpeg", "png", "webp"];
 
               const fileExtension =
@@ -71,15 +73,38 @@ export function createDatabaseHooks(db: dbClient) {
 
               const imageBuffer = await downloadImage(user.image);
 
-              await client.send(
-                new PutObjectCommand({
-                  Bucket: env("NEXT_PUBLIC_AVATAR_BUCKET_NAME") ?? "",
-                  Key: key,
-                  Body: imageBuffer,
-                  ContentType: `image/${!allowedFileExtensions.includes(fileExtension) ? "jpeg" : fileExtension}`,
-                  ACL: "public-read",
-                }),
-              );
+              if (getStorageDriver() === "fs") {
+                const storageDir = process.env.KAN_STORAGE_DIR;
+                if (!storageDir) {
+                  throw new Error("KAN_STORAGE_DIR not configured");
+                }
+
+                const fs = await import("node:fs/promises");
+                const path = await import("node:path");
+
+                const bucket = env("NEXT_PUBLIC_AVATAR_BUCKET_NAME") ?? "";
+                const uploadsRoot = path.resolve(storageDir, "uploads");
+                const targetPath = path.resolve(
+                  uploadsRoot,
+                  bucket,
+                  ...key.split("/").filter(Boolean),
+                );
+
+                await fs.mkdir(path.dirname(targetPath), { recursive: true });
+                await fs.writeFile(targetPath, imageBuffer);
+              } else {
+                const client = createS3Client();
+
+                await client.send(
+                  new PutObjectCommand({
+                    Bucket: env("NEXT_PUBLIC_AVATAR_BUCKET_NAME") ?? "",
+                    Key: key,
+                    Body: imageBuffer,
+                    ContentType: `image/${!allowedFileExtensions.includes(fileExtension) ? "jpeg" : fileExtension}`,
+                    ACL: "public-read",
+                  }),
+                );
+              }
 
               avatarKey = key;
 
@@ -97,8 +122,21 @@ export function createDatabaseHooks(db: dbClient) {
                 .split(" ")
                 .filter(Boolean);
               const lastName = rest.length ? rest.join(" ") : undefined;
+
+              const uploadsPathRaw =
+                env("NEXT_PUBLIC_UPLOADS_PATH") ?? "/uploads";
+              const uploadsPath =
+                uploadsPathRaw === "/"
+                  ? ""
+                  : uploadsPathRaw.endsWith("/")
+                    ? uploadsPathRaw.slice(0, -1)
+                    : uploadsPathRaw;
+
+              const baseStorageUrl = env("NEXT_PUBLIC_STORAGE_URL") ?? "";
               const avatarUrl = avatarKey
-                ? `${env("NEXT_PUBLIC_STORAGE_URL")}/${env("NEXT_PUBLIC_AVATAR_BUCKET_NAME")}/${avatarKey}`
+                ? getStorageDriver() === "fs"
+                  ? `${baseStorageUrl}${uploadsPath}/${env("NEXT_PUBLIC_AVATAR_BUCKET_NAME")}/${avatarKey}`
+                  : `${baseStorageUrl}/${env("NEXT_PUBLIC_AVATAR_BUCKET_NAME")}/${avatarKey}`
                 : undefined;
 
               const unsubscribeUrl = await createEmailUnsubscribeLink(user.id);

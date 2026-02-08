@@ -2,21 +2,32 @@ services:
   web:
     image: ghcr.io/kanbn/kan:latest
     container_name: ${CONTAINER_NAME:-kan-web}
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        APP_VERSION: ${APP_VERSION:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
     networks:
       - kan-network
       - dokploy-network
-    build:
-      context: .
-      dockerfile: ./apps/web/Dockerfile.new
     env_file:
       - .env
+    volumes:
+      - kan_uploads:/data
     environment:
       # Required environment variables
       - NEXT_PUBLIC_BASE_URL=${NEXT_PUBLIC_BASE_URL}
       - BETTER_AUTH_SECRET=${BETTER_AUTH_SECRET}
-      - POSTGRES_URL=${POSTGRES_URL}
+      # In Docker, the database host is the `postgres` service (not localhost).
+      - POSTGRES_URL=postgresql://kan:${POSTGRES_PASSWORD}@postgres:5432/kan_db
+
+      # Storage (optional)
+      - KAN_STORAGE_DRIVER=${KAN_STORAGE_DRIVER}
+      # Always use a Linux container path here (do not point to a Windows host path).
+      - KAN_STORAGE_DIR=/data
+      - NEXT_PUBLIC_UPLOADS_PATH=${NEXT_PUBLIC_UPLOADS_PATH}
 
       # Redis (optional - for rate limiting)
       - REDIS_URL=${REDIS_URL}
@@ -113,6 +124,8 @@ services:
   postgres:
     image: postgres:15
     container_name: kan-db
+    env_file:
+      - .env
     environment:
       - POSTGRES_DB=kan_db
       - POSTGRES_USER=kan
@@ -132,3 +145,4 @@ networks:
 
 volumes:
   kan_postgres_data:
+  kan_uploads:

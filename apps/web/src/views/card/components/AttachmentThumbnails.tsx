@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { Dialog, Transition } from "@headlessui/react";
 import { t } from "@lingui/core/macro";
+import { env } from "next-runtime-env";
 import { Fragment, useEffect, useState } from "react";
 import {
   HiArrowDownTray,
@@ -14,6 +15,41 @@ import {
 import { usePopup } from "~/providers/popup";
 import { api } from "~/utils/api";
 import { invalidateCard } from "~/utils/cardInvalidation";
+
+function normalizeUploadsPath(pathname: string | undefined) {
+  const trimmed = (pathname ?? "").trim();
+  const value = trimmed.length > 0 ? trimmed : "/uploads";
+
+  if (value === "/") {
+    return "";
+  }
+
+  const withLeadingSlash = value.startsWith("/") ? value : `/${value}`;
+  return withLeadingSlash.endsWith("/")
+    ? withLeadingSlash.slice(0, -1)
+    : withLeadingSlash;
+}
+
+function getDirectDownloadHref(url: string) {
+  try {
+    const parsed = new URL(url, window.location.origin);
+    if (parsed.origin !== window.location.origin) {
+      return null;
+    }
+
+    const uploadsPath = normalizeUploadsPath(env("NEXT_PUBLIC_UPLOADS_PATH"));
+    if (
+      uploadsPath.length > 0 &&
+      !parsed.pathname.startsWith(`${uploadsPath}/`)
+    ) {
+      return null;
+    }
+
+    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+  } catch {
+    return null;
+  }
+}
 
 interface Attachment {
   publicId: string;
@@ -146,10 +182,14 @@ export function AttachmentThumbnails({
       return;
     }
 
-    const downloadUrl = `/api/download/attatchment?url=${encodeURIComponent(attachment.url)}&filename=${encodeURIComponent(attachment.originalFilename ?? "attachment")}`;
-
     const link = document.createElement("a");
-    link.href = downloadUrl;
+    const directHref = getDirectDownloadHref(attachment.url);
+    if (directHref) {
+      link.href = directHref;
+      link.download = attachment.originalFilename ?? "attachment";
+    } else {
+      link.href = `/api/download/attatchment?url=${encodeURIComponent(attachment.url)}&filename=${encodeURIComponent(attachment.originalFilename ?? "attachment")}`;
+    }
     link.style.display = "none";
     document.body.appendChild(link);
     link.click();
